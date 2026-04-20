@@ -20,9 +20,13 @@ MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/heoquay-admin?appNam
 UPLOAD_DIR=uploads
 MAX_FILE_SIZE=10485760
 TOKEN=<calio_api_token>
+API_KEY_GEMINI=<google_gemini_api_key>
+FB_TOKEN=<facebook_page_access_token>
 ```
 
-> **TOKEN** được gửi trong header `Token` khi gọi Calio API để xác thực.
+> - **TOKEN**: Được gửi trong header `Token` khi gọi Calio API để xác thực.
+> - **API_KEY_GEMINI**: API key của Google Gemini AI để tạo caption bài viết.
+> - **FB_TOKEN**: Facebook Page Access Token với quyền `pages_manage_posts` và `pages_read_engagement` để đăng bài lên Fanpage.
 
 ---
 
@@ -966,10 +970,420 @@ Kiểm tra server đang chạy.
 
 ---
 
+---
+
+## Facebook Post Generation API
+
+Base path: `/api/posts`
+
+Hệ thống tự động tạo caption bài viết Facebook bằng Gemini AI dựa trên từ khóa, hỗ trợ upload ảnh và đăng lên Facebook Page. Các bài viết **không lưu vào database** - chỉ tạo tạm thời trong memory, nếu hủy thì bài viết sẽ bị xóa.
+
+### Kiến trúc Facebook Post
+
+```
+Frontend → Backend (localhost:5000) → Gemini AI (tạo caption)
+                    ↓
+              Facebook Graph API (đăng bài)
+```
+
+**Flow hoạt động:**
+1. Frontend gửi **từ khóa** (VD: "bánh hỏi") → Backend gọi Gemini AI tạo caption
+2. Frontend có thể **tạo lại** caption nếu không ưng (cùng từ khóa hoặc khác)
+3. Frontend **upload ảnh** (0-5 ảnh) gắn vào bài viết
+4. Frontend bấm **Đăng Facebook** → Backend đăng bài + ảnh lên Facebook Page
+5. Hoặc Frontend bấm **Hủy** → Backend xóa caption + ảnh tạm
+
+---
+
+### 1. Tạo caption từ từ khóa
+
+```
+POST /api/posts/generate
+```
+
+Gửi từ khóa, Gemini AI sẽ tạo caption theo phong cách Heo Quay Ngọc Hải (dựa trên rule.md).
+
+**Request Body:**
+
+| Trường  | Kiểu   | Mô tả                          |
+|---------|--------|--------------------------------|
+| keyword | string | Từ khóa cho caption (VD: "bánh hỏi", "heo quay") |
+
+**Ví dụ:**
+
+```bash
+curl -X POST http://localhost:5000/api/posts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"keyword": "bánh hỏi"}'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "caption_1776658862169_eiv2hbjl6",
+    "keyword": "bánh hỏi",
+    "title": "🐷🔥 Bánh hỏi heo quay Ngọc Hải: Ăn là ghiền! 😋",
+    "content": "Bánh hỏi dai dai, thơm thơm, ăn kèm heo quay da giòn rụm...\n\n🏪 Chi nhành:\n📍 43/6 Vân Đồn\n..."
+  }
+}
+```
+
+> **Lưu ý:** `id` được trả về để Frontend reference cho các API tiếp theo (upload ảnh, đăng bài, hủy). Caption chỉ lưu tạm trong memory server, sẽ mất khi restart.
+
+---
+
+### 2. Tạo lại caption (Regenerate)
+
+```
+POST /api/posts/regenerate
+```
+
+Tạo caption mới, có thể dùng cùng từ khóa cũ hoặc từ khóa mới.
+
+**Request Body:**
+
+| Trường  | Kiểu   | Mô tả                                              |
+|---------|--------|----------------------------------------------------|
+| id      | string | (Tùy chọn) ID caption cũ để lấy lại từ khóa        |
+| keyword | string | (Tùy chọn) Từ khóa mới, ghi đè từ khóa cũ          |
+
+> Phải cung cấp ít nhất 1 trong 2: `id` hoặc `keyword`. Nếu cung cấp cả 2, `keyword` sẽ được ưu tiên.
+
+**Ví dụ - Tạo lại với cùng từ khóa:**
+
+```bash
+curl -X POST http://localhost:5000/api/posts/regenerate \
+  -H "Content-Type: application/json" \
+  -d '{"id": "caption_1776658862169_eiv2hbjl6"}'
+```
+
+**Ví dụ - Tạo lại với từ khóa mới:**
+
+```bash
+curl -X POST http://localhost:5000/api/posts/regenerate \
+  -H "Content-Type: application/json" \
+  -d '{"keyword": "heo quay da giòn"}'
+```
+
+**Response:** Giống API generate, trả về caption mới với `id` mới. Caption cũ sẽ bị xóa khỏi memory.
+
+---
+
+### 3. Lấy caption đang lưu
+
+```
+GET /api/posts/caption/:id
+```
+
+Lấy lại caption đã tạo trước đó (trường hợp Frontend cần refetch).
+
+**URL Parameters:**
+
+| Tham số | Kiểu   | Mô tả          |
+|---------|--------|----------------|
+| id      | string | ID caption      |
+
+**Ví dụ:**
+
+```bash
+curl http://localhost:5000/api/posts/caption/caption_1776658862169_eiv2hbjl6
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "caption_1776658862169_eiv2hbjl6",
+    "keyword": "bánh hỏi",
+    "title": "🐷🔥 Bánh hỏi heo quay Ngọc Hải: Ăn là ghiền! 😋",
+    "content": "...",
+    "images": [],
+    "imageUrls": [],
+    "createdAt": "2026-04-20T..."
+  }
+}
+```
+
+**Error (caption không tồn tại):**
+
+```json
+{
+  "success": false,
+  "message": "Caption không tồn tại hoặc đã hết hạn"
+}
+```
+
+---
+
+### 4. Upload ảnh cho bài viết
+
+```
+POST /api/posts/upload-images
+```
+
+Upload 1-5 ảnh để gắn vào bài viết. Ảnh được lưu tạm thời trên server, sẽ bị xóa khi đăng bài hoặc hủy.
+
+**Request:** `multipart/form-data`
+
+| Trường    | Kiểu   | Mô tả                                    |
+|-----------|--------|------------------------------------------|
+| images    | File[] | 1-5 file ảnh (JPEG, PNG, GIF, WebP), tối đa 10MB mỗi file |
+| captionId | string | (Tùy chọn) ID caption đã tạo để gắn ảnh vào |
+
+**Ví dụ:**
+
+```bash
+curl -X POST http://localhost:5000/api/posts/upload-images \
+  -F "images=@photo1.jpg" \
+  -F "images=@photo2.jpg" \
+  -F "captionId=caption_1776658862169_eiv2hbjl6"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "captionId": "caption_1776658862169_eiv2hbjl6",
+    "images": [
+      "/uploads/facebook/fb_photo1-1776659078774-603340399.jpg",
+      "/uploads/facebook/fb_photo2-1776659078775-603340400.jpg"
+    ],
+    "count": 2
+  }
+}
+```
+
+> **Lưu ý:**
+> - Có thể upload ảnh nhiều lần (mỗi lần thêm ảnh vào caption).
+> - Nếu không có `captionId`, ảnh vẫn được upload nhưng không gắn caption nào.
+> - Ảnh chỉ chấp nhận định dạng: JPEG, PNG, GIF, WebP.
+> - Tối đa 5 ảnh mỗi bài viết trên Facebook.
+
+---
+
+### 5. Đăng bài lên Facebook
+
+```
+POST /api/posts/publish
+```
+
+Đăng bài viết (có hoặc không có ảnh) lên Facebook Page. Sau khi đăng thành công, caption và ảnh tạm thời sẽ bị xóa khỏi server.
+
+**Request Body:**
+
+| Trường    | Kiểu   | Mô tả                                                        |
+|-----------|--------|--------------------------------------------------------------|
+| captionId | string | (Tùy chọn) ID caption đã tạo + upload ảnh                   |
+| title     | string | (Tùy chọn) Tiêu đề bài viết, dùng nếu không có captionId     |
+| content   | string | (Tùy chọn) Nội dung bài viết, dùng nếu không có captionId    |
+
+> Nếu cung cấp `captionId`, hệ thống sẽ lấy title, content và ảnh từ caption đó. Nếu không có `captionId`, phải cung cấp `title` và/hoặc `content`.
+
+**Ví dụ - Đăng bài từ caption đã tạo:**
+
+```bash
+curl -X POST http://localhost:5000/api/posts/publish \
+  -H "Content-Type: application/json" \
+  -d '{"captionId": "caption_1776658862169_eiv2hbjl6"}'
+```
+
+**Ví dụ - Đăng bài với nội dung tùy chỉnh (không qua Gemini):**
+
+```bash
+curl -X POST http://localhost:5000/api/posts/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "🔥 Khuyến mãi hôm nay!",
+    "content": "Heo quay giá sốc chỉ 35k/phần 🐷\nGọi ngay 0766 666 656!"
+  }'
+```
+
+**Response thành công:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "postId": "880418671830392_122125565757213617",
+    "message": "Đăng bài lên Facebook thành công!"
+  }
+}
+```
+
+**Response lỗi (Facebook API lỗi):**
+
+```json
+{
+  "success": false,
+  "message": "Lỗi khi đăng bài lên Facebook",
+  "error": {
+    "error": {
+      "message": "...",
+      "type": "OAuthException",
+      "code": 1
+    }
+  }
+}
+```
+
+> **Lưu ý quan trọng:**
+> - Sau khi đăng thành công, caption và ảnh tạm thời trên server sẽ bị xóa.
+> - `postId` trả về là ID bài viết trên Facebook, có thể dùng để truy xuất bài viết.
+> - Nếu không có ảnh, bài viết sẽ đăng dưới dạng text-only.
+
+---
+
+### 6. Hủy bài viết (Discard)
+
+```
+DELETE /api/posts/cancel/:id
+```
+
+Hủy caption, xóa ảnh tạm thời đã upload. Bài viết sẽ không được đăng lên Facebook.
+
+**URL Parameters:**
+
+| Tham số | Kiểu   | Mô tả      |
+|---------|--------|------------|
+| id      | string | ID caption  |
+
+**Ví dụ:**
+
+```bash
+curl -X DELETE http://localhost:5000/api/posts/cancel/caption_1776658862169_eiv2hbjl6
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Caption đã được hủy và xóa"
+}
+```
+
+> **Lưu ý:** Hành động này không thể hoàn tác. Tất cả ảnh đã upload cho caption này sẽ bị xóa khỏi server.
+
+---
+
+### 7. Kiểm tra thông tin Facebook Page
+
+```
+GET /api/posts/page-info
+```
+
+Lấy thông tin Facebook Page đang kết nối (dùng để verify token).
+
+**Ví dụ:**
+
+```bash
+curl http://localhost:5000/api/posts/page-info
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "880418671830392",
+    "name": "Tin tức 24h",
+    "link": "https://www.facebook.com/880418671830392",
+    "picture": { "data": { "url": "..." } }
+  }
+}
+```
+
+---
+
+## Flow tạo bài viết Facebook (cho Frontend)
+
+### Flow chính:
+
+```
+1. Tạo caption:  POST /api/posts/generate { keyword: "bánh hỏi" }
+                    ↓ trả về { id, title, content }
+                    
+2a. Nếu ưng:     Upload ảnh (optional): POST /api/posts/upload-images
+                    ↓
+                 Đăng bài:   POST /api/posts/publish { captionId }
+                    ↓ trả về { postId }
+                    
+2b. Nếu không ưng: Tạo lại: POST /api/posts/regenerate { id }
+                    ↓ trả về caption mới
+                    
+2c. Nếu không muốn đăng: Hủy: DELETE /api/posts/cancel/:id
+```
+
+### Code example (Frontend):
+
+```javascript
+// 1. Tạo caption
+const generateRes = await fetch('/api/posts/generate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ keyword: 'bánh hỏi' })
+});
+const { data: caption } = await generateRes.json();
+
+// 2a. Nếu không ưng → tạo lại
+const regenRes = await fetch('/api/posts/regenerate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ id: caption.id })  // dùng lại từ khóa cũ
+});
+const { data: newCaption } = await regenRes.json();
+
+// 3. Upload ảnh (nếu có)
+const formData = new FormData();
+formData.append('captionId', caption.id);
+photos.forEach(photo => formData.append('images', photo));
+const uploadRes = await fetch('/api/posts/upload-images', {
+  method: 'POST',
+  body: formData
+});
+
+// 4. Đăng Facebook
+const publishRes = await fetch('/api/posts/publish', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ captionId: caption.id })
+});
+
+// HOẶC hủy bài
+// await fetch(`/api/posts/cancel/${caption.id}`, { method: 'DELETE' });
+```
+
+---
+
+## Lỗi thường gặp (Facebook Post API)
+
+| Mã lỗi | Nguyên nhân                            | Cách khắc phục                              |
+|--------|-----------------------------------------|----------------------------------------------|
+| 400    | Từ khóa trống                           | Nhập từ khóa cho caption                      |
+| 400    | Upload file không phải ảnh              | Chỉ chấp nhận JPEG, PNG, GIF, WebP            |
+| 400    | Quá 5 ảnh                               | Giới hạn tối đa 5 ảnh mỗi bài                |
+| 404    | Caption ID không tồn tại                | Caption đã hủy hoặc server đã restart         |
+| 500    | Gemini API lỗi                          | Kiểm tra API_KEY_GEMINI trong .env            |
+| 500    | Facebook API lỗi (OAuthException)       | Kiểm tra FB_TOKEN trong .env, token có thể hết hạn |
+| 500    | Facebook API lỗi (unknown)              | Thử lại, kiểm tra quyền Page access token     |
+
+---
+
 ## Tech Stack
 
 - **Runtime:** Node.js
 - **Framework:** Express.js
 - **Database:** MongoDB (Mongoose)
-- **External API:** Calio (clientapi.phonenet.io)
-- **Auth:** Header `Token` gửi tới Calio API
+- **External APIs:**
+  - Calio (clientapi.phonenet.io) - Quản lý đơn hàng
+  - Google Gemini AI - Tạo caption bài viết
+  - Facebook Graph API - Đăng bài lên Fanpage
+- **Auth:** Header `Token` gửi tới Calio API | `API_KEY_GEMINI` | `FB_TOKEN`

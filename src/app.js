@@ -16,7 +16,10 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Routes
 const fileRoutes = require('./routes/fileRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+
 app.use('/api/files', fileRoutes);
+app.use('/api/orders', orderRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

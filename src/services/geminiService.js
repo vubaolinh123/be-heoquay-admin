@@ -3,7 +3,31 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const API_KEY = process.env.API_KEY_GEMINI;
 const genAI = new GoogleGenerativeAI(API_KEY);
 
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const DEFAULT_MODEL = 'gemini-2.0-flash';
+
+/**
+ * Get the list of available Gemini models
+ * @returns {Promise<Array<{name: string, displayName: string, description: string}>>}
+ */
+const listModels = async () => {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`
+  );
+  const data = await response.json();
+
+  if (!data.models) {
+    throw new Error(data.error?.message || 'Không thể lấy danh sách model Gemini');
+  }
+
+  // Filter to only generative models (exclude embedding, etc.)
+  return data.models
+    .filter((m) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+    .map((m) => ({
+      name: m.name.replace('models/', ''), // e.g. "gemini-2.0-flash"
+      displayName: m.displayName || m.name,
+      description: m.description || '',
+    }));
+};
 
 /**
  * Build the system prompt from rule.md content
@@ -51,9 +75,11 @@ KHÔNG viết tắt trong bất kỳ địa chỉ nào.`;
 /**
  * Generate a Facebook post caption based on a keyword
  * @param {string} keyword - The topic/keyword for the post (e.g., "bánh hỏi", "heo quay")
+ * @param {string} [modelName] - The Gemini model to use (default: gemini-2.0-flash)
  * @returns {Promise<{title: string, content: string}>}
  */
-const generateCaption = async (keyword) => {
+const generateCaption = async (keyword, modelName) => {
+  const model = genAI.getGenerativeModel({ model: modelName || DEFAULT_MODEL });
   const systemPrompt = buildSystemPrompt();
 
   const result = await model.generateContent([
@@ -106,13 +132,15 @@ CHỈ trả về JSON, không thêm gì khác.`,
 /**
  * Regenerate caption (same as generate, just a convenience alias)
  * @param {string} keyword
+ * @param {string} [modelName]
  * @returns {Promise<{title: string, content: string}>}
  */
-const regenerateCaption = async (keyword) => {
-  return generateCaption(keyword);
+const regenerateCaption = async (keyword, modelName) => {
+  return generateCaption(keyword, modelName);
 };
 
 module.exports = {
   generateCaption,
   regenerateCaption,
+  listModels,
 };

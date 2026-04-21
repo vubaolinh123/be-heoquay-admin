@@ -4,6 +4,12 @@ const postController = require('../controllers/postController');
 const uploadImage = require('../config/multerImage');
 
 /**
+ * @route   GET /api/posts/models
+ * @desc    Get available Gemini models for caption generation
+ */
+router.get('/models', postController.getModels);
+
+/**
  * @route   POST /api/posts/generate
  * @desc    Generate caption from keyword using Gemini AI
  * @body    { keyword: string }

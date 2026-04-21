@@ -6,7 +6,7 @@ class FileService {
   /**
    * Tạo record file mới sau khi upload thành công
    */
-  async createFileRecord(fileData) {
+  async createFileRecord(fileData, extraFields = {}) {
     const { originalname, mimetype, size, filename } = fileData;
     const filePath = path.join('uploads', filename);
     const downloadUrl = `/api/files/download/${filename}`;
@@ -18,6 +18,10 @@ class FileService {
       size: size,
       path: filePath,
       downloadUrl: downloadUrl,
+      description: extraFields.description || '',
+      uploadedBy: extraFields.uploadedBy || '',
+      supplierId: extraFields.supplierId || '',
+      supplierName: extraFields.supplierName || '',
     });
 
     return fileDoc;
@@ -26,10 +30,13 @@ class FileService {
   /**
    * Lấy danh sách tất cả file (có phân trang)
    */
-  async getAllFiles({ page = 1, limit = 10, search = '' } = {}) {
+  async getAllFiles({ page = 1, limit = 10, search = '', supplierId = '' } = {}) {
     const query = {};
     if (search) {
       query.originalName = { $regex: search, $options: 'i' };
+    }
+    if (supplierId) {
+      query.supplierId = supplierId;
     }
 
     const skip = (page - 1) * limit;
@@ -69,8 +76,8 @@ class FileService {
       throw new Error('FILE_NOT_FOUND');
     }
 
-    // Chỉ cho phép cập nhật description và uploadedBy
-    const allowedFields = ['description', 'uploadedBy'];
+    // Chỉ cho phép cập nhật description, uploadedBy, supplierId, supplierName
+    const allowedFields = ['description', 'uploadedBy', 'supplierId', 'supplierName'];
     for (const field of allowedFields) {
       if (updateData[field] !== undefined) {
         file[field] = updateData[field];

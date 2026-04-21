@@ -8,13 +8,31 @@ const path = require('path');
 const captionStore = new Map();
 
 /**
+ * Get available Gemini models
+ * GET /api/posts/models
+ */
+const getModels = async (req, res) => {
+  try {
+    const models = await geminiService.listModels();
+    res.json({ success: true, data: models });
+  } catch (error) {
+    console.error('[PostController] getModels error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách model Gemini',
+      error: error.message,
+    });
+  }
+};
+
+/**
  * Generate caption from keyword using Gemini
  * POST /api/posts/generate
- * Body: { keyword: "bánh hỏi" }
+ * Body: { keyword: "bánh hỏi", model?: "gemini-2.0-flash" }
  */
 const generateCaption = async (req, res) => {
   try {
-    const { keyword } = req.body;
+    const { keyword, model } = req.body;
 
     if (!keyword || keyword.trim() === '') {
       return res.status(400).json({
@@ -23,7 +41,7 @@ const generateCaption = async (req, res) => {
       });
     }
 
-    const result = await geminiService.generateCaption(keyword.trim());
+    const result = await geminiService.generateCaption(keyword.trim(), model);
 
     // Generate a temporary ID so frontend can reference this caption
     const tempId = `caption_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -60,7 +78,7 @@ const generateCaption = async (req, res) => {
  */
 const regenerateCaption = async (req, res) => {
   try {
-    const { id, keyword } = req.body;
+    const { id, keyword, model } = req.body;
 
     // Use existing keyword from stored caption if id provided
     let actualKeyword = keyword;
@@ -75,7 +93,7 @@ const regenerateCaption = async (req, res) => {
       });
     }
 
-    const result = await geminiService.regenerateCaption(actualKeyword.trim());
+    const result = await geminiService.regenerateCaption(actualKeyword.trim(), model);
 
     // Replace old caption or create new one
     const newId = `caption_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -199,10 +217,11 @@ const uploadImages = async (req, res) => {
  * Publish post to Facebook
  * POST /api/posts/publish
  * Body: { captionId: "caption_xxx" } or { title: "...", content: "..." }
+ *       { pageKey: "page1" | "page2" } — which FB Page to publish to (default: "page1")
  */
 const publishPost = async (req, res) => {
   try {
-    const { captionId, title, content } = req.body;
+    const { captionId, title, content, pageKey = 'page1' } = req.body;
 
     let postTitle = title;
     let postContent = content;
@@ -232,9 +251,9 @@ const publishPost = async (req, res) => {
     if (imagePaths.length > 0) {
       // Filter only existing files
       const existingPaths = imagePaths.filter((p) => fs.existsSync(p));
-      fbResult = await facebookService.publishPostWithPhotos(message, existingPaths);
+      fbResult = await facebookService.publishPostWithPhotos(message, existingPaths, pageKey);
     } else {
-      fbResult = await facebookService.publishTextPost(message);
+      fbResult = await facebookService.publishTextPost(message, pageKey);
     }
 
     // Clean up: remove caption from memory and delete temporary image files
@@ -321,12 +340,22 @@ const cancelCaption = async (req, res) => {
 
 /**
  * Get Facebook Page info (for verification)
- * GET /api/posts/page-info
+ * GET /api/posts/page-info?pageKey=page1
+ * If no pageKey, returns all pages info as array
  */
 const getPageInfo = async (req, res) => {
   try {
-    const info = await facebookService.getPageInfo();
-    res.json({ success: true, data: info });
+    const { pageKey } = req.query;
+
+    if (pageKey && (pageKey === 'page1' || pageKey === 'page2')) {
+      // Get info for a specific page
+      const info = await facebookService.getPageInfo(pageKey);
+      res.json({ success: true, data: { pageKey, ...info } });
+    } else {
+      // Return all pages info
+      const pages = await facebookService.getAllPagesInfo();
+      res.json({ success: true, data: pages });
+    }
   } catch (error) {
     console.error('[PostController] getPageInfo error:', error.message);
     res.status(500).json({
@@ -338,6 +367,7 @@ const getPageInfo = async (req, res) => {
 };
 
 module.exports = {
+  getModels,
   generateCaption,
   regenerateCaption,
   getCaption,

@@ -14,14 +14,15 @@ const uploadFile = async (req, res) => {
       });
     }
 
-    // Thêm description từ form data nếu có
-    const fileDoc = await fileService.createFileRecord(req.file);
+    // Build extraFields from form data
+    const extraFields = {
+      description: req.body.description || '',
+      uploadedBy: req.body.uploadedBy || '',
+      supplierId: req.body.supplierId || '',
+      supplierName: req.body.supplierName || '',
+    };
 
-    // Gán thêm description nếu gửi kèm
-    if (req.body.description) {
-      fileDoc.description = req.body.description;
-      await fileDoc.save();
-    }
+    const fileDoc = await fileService.createFileRecord(req.file, extraFields);
 
     res.status(201).json({
       success: true,
@@ -42,8 +43,8 @@ const uploadFile = async (req, res) => {
  */
 const getFiles = async (req, res) => {
   try {
-    const { page, limit, search } = req.query;
-    const result = await fileService.getAllFiles({ page, limit, search });
+    const { page, limit, search, supplierId } = req.query;
+    const result = await fileService.getAllFiles({ page, limit, search, supplierId });
 
     res.status(200).json({
       success: true,

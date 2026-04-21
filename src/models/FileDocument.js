@@ -34,6 +34,17 @@ const FileDocumentSchema = new Schema(
       default: '',
       trim: true,
     },
+    // Liên kết nhà cung cấp
+    supplierId: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    supplierName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     // Có thể thêm các field mở rộng
     uploadedBy: {
       type: String,
